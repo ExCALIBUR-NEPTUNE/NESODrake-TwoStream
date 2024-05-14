@@ -1,0 +1,3 @@
+[submodule "NESO-Particles"]
+	path = NESO-Particles
+	url = https://github.com/ExCALIBUR-NEPTUNE/NESO-Particles.git
