@@ -56,6 +56,8 @@ struct TwoStreamParticles {
       std::make_shared<PetscInterface::DMPlexInterface>(
         this->dm, 0, PETSC_COMM_WORLD);
 
+    NESOASSERT(this->mesh->validate_halos(), "Halo validation failed.");
+
     auto mapper = std::make_shared<PetscInterface::DMPlexLocalMapper>(
         sycl_target, mesh);
     this->domain = std::make_shared<Domain>(mesh, mapper);

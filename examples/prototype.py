@@ -19,10 +19,5 @@ if __name__ == "__main__":
     )
 
 
-
-
-
-
-
     particle_state.free();
     mesh.topology_dm.decRef()
