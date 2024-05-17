@@ -46,8 +46,9 @@ struct TwoStreamParticles {
     int flag;
     MPICHK(MPI_Initialized(&flag));
     NESOASSERT(flag, "MPI is not initalised.");
-
-    this->dm = reinterpret_cast<DM>(dm_vptr);
+    
+    DM dm_original = reinterpret_cast<DM>(dm_vptr);
+    PETSCCHK(DMClone(dm_original, &this->dm));
     PetscBool is_initialised;
     PETSCCHK(PetscInitialized(&is_initialised));
     NESOASSERT(is_initialised, "PETSc is not initialised");
@@ -168,6 +169,7 @@ struct TwoStreamParticles {
     if (this->mesh){
       this->mesh->free();
     }
+    PETSCCHK(DMDestroy(&this->dm));
     if (this->sycl_target){
       this->sycl_target->free();
     }
@@ -233,13 +235,17 @@ struct TwoStreamParticles {
     parallel_advection_restore(this->particle_group);
     // Move particles to the owning ranks and correct cells.
     this->transfer_particles();
-
+    this->write(num_steps);
   }
   
   void transfer_particles() {
     this->loop_pbc->execute();
     this->particle_group->hybrid_move();
     this->particle_group->cell_move();
+  }
+
+  void validate_halos(){
+    NESOASSERT(this->mesh->validate_halos(), "Halo validation failed.");
   }
 
 };
@@ -250,6 +256,7 @@ PYBIND11_MODULE(two_stream, m) {
   py::class_<TwoStreamParticles>(m, "TwoStreamParticles")
       .def(py::init<std::uintptr_t, const int, const double>())
       .def("free", &TwoStreamParticles::free)
-      .def("write",&TwoStreamParticles::write);
+      .def("write",&TwoStreamParticles::write)
+      .def("validate_halos",&TwoStreamParticles::validate_halos);
 
 }
