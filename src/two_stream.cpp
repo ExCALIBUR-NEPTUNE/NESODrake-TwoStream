@@ -69,7 +69,8 @@ struct TwoStreamParticles {
                                ParticleProp(Sym<REAL>("Q"), 1),
                                ParticleProp(Sym<REAL>("M"), 1),
                                ParticleProp(Sym<REAL>("V"), 3),
-                               ParticleProp(Sym<REAL>("E"), 2)};
+                               ParticleProp(Sym<REAL>("B"), 3),
+                               ParticleProp(Sym<REAL>("E"), 3)};
 
     this->particle_group = std::make_shared<ParticleGroup>(
         this->domain, particle_spec, this->sycl_target);
@@ -136,20 +137,20 @@ struct TwoStreamParticles {
         // update of position to next time step
         P.at(0) += k_dt * V.at(0);
         P.at(1) += k_dt * V.at(1);
-        P.at(2) += k_dt * V.at(2);
+        // P.at(2) += k_dt * V.at(2);
       },
       Access::read(Sym<REAL>("B")), 
       Access::read(Sym<REAL>("E")),
       Access::read(Sym<REAL>("Q")), 
       Access::read(Sym<REAL>("M")),
-      Access::write(Sym<REAL>("POSITION")),
-      Access::write(Sym<REAL>("VELOCITY"))
+      Access::write(Sym<REAL>("P")),
+      Access::write(Sym<REAL>("V"))
     );
 
     this->add_particles();
   }
 
-  void write(int step){
+  void write(){
     if(!this->h5part){
       this->h5part = std::make_shared<H5Part>(
        "particle_trajectory.h5part", 
@@ -162,7 +163,7 @@ struct TwoStreamParticles {
        Sym<INT>("PARTICLE_ID")
       );
     }
-    this->h5part->write(step);
+    this->h5part->write();
   }
 
   void free(){
@@ -228,14 +229,14 @@ struct TwoStreamParticles {
       if(!rank){
         nprint("Advection Setup:", stepx);
       }
-      this->write(stepx);
+      // this->write();
       parallel_advection_step(this->particle_group, num_steps, stepx);
       this->transfer_particles();
     }
     parallel_advection_restore(this->particle_group);
     // Move particles to the owning ranks and correct cells.
     this->transfer_particles();
-    this->write(num_steps);
+    // this->write();
   }
   
   void transfer_particles() {
@@ -248,6 +249,11 @@ struct TwoStreamParticles {
     NESOASSERT(this->mesh->validate_halos(), "Halo validation failed.");
   }
 
+  void move(){
+    this->loop_advect->execute();
+    this->transfer_particles();
+  }
+
 };
 
 
@@ -257,6 +263,7 @@ PYBIND11_MODULE(two_stream, m) {
       .def(py::init<std::uintptr_t, const int, const double>())
       .def("free", &TwoStreamParticles::free)
       .def("write",&TwoStreamParticles::write)
+      .def("move",&TwoStreamParticles::move)
       .def("validate_halos",&TwoStreamParticles::validate_halos);
 
 }
