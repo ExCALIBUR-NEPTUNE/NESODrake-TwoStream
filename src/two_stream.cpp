@@ -57,7 +57,7 @@ struct TwoStreamParticles {
       std::make_shared<PetscInterface::DMPlexInterface>(
         this->dm, 0, PETSC_COMM_WORLD);
 
-    NESOASSERT(this->mesh->validate_halos(), "Halo validation failed.");
+    nprint("cell_count:", mesh->get_cell_count());
 
     auto mapper = std::make_shared<PetscInterface::DMPlexLocalMapper>(
         sycl_target, mesh);

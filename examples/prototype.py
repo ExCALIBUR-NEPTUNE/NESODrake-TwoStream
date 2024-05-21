@@ -3,14 +3,15 @@ from two_stream import *
 
 if __name__ == "__main__":
     
-    num_steps = 20
+    num_steps = 200
     num_cells = 32
-    num_particles = 100000
+    num_particles = 10
 
-    mesh = UnitSquareMesh(
+    mesh = PeriodicUnitSquareMesh(
         num_cells, 
         num_cells
     )
+
     # Immediately pass the DM to NESO-Particles before Firedrake adds any halo
     # cells.
     particle_state = TwoStreamParticles(
@@ -18,10 +19,10 @@ if __name__ == "__main__":
         num_particles,
         0.001
     )
+    particle_state.validate_halos()
 
     outfile = VTKFile("mesh.pvd")
     outfile.write(mesh)
-    particle_state.validate_halos()
 
     for stepx in range(num_steps):
         if (stepx % 10 == 0):
