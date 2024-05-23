@@ -21,6 +21,7 @@ struct TwoStreamParticles {
   
   DM dm;
   int num_particles;
+  int ndim;
   double dt;
   SYCLTargetSharedPtr sycl_target;
   std::shared_ptr<PetscInterface::DMPlexInterface> mesh;
@@ -30,6 +31,11 @@ struct TwoStreamParticles {
   ParticleLoopSharedPtr loop_pbc;
   ParticleLoopSharedPtr loop_advect;
   std::shared_ptr<H5Part> h5part;
+
+  std::unique_ptr<ExternalCommon::DOFMapperDG> dof_mapper_dg;
+  std::unique_ptr<ExternalCommon::QuadraturePointMapper> qpm;
+
+  std::shared_ptr<CellDatConst<REAL>> cdc_project;
 
   TwoStreamParticles() = default;
   TwoStreamParticles(
@@ -56,6 +62,7 @@ struct TwoStreamParticles {
     this->mesh = 
       std::make_shared<PetscInterface::DMPlexInterface>(
         this->dm, 0, PETSC_COMM_WORLD);
+    this->ndim = mesh->get_ndim();
 
     nprint("cell_count:", mesh->get_cell_count());
 
@@ -147,7 +154,10 @@ struct TwoStreamParticles {
       Access::write(Sym<REAL>("V"))
     );
 
-    this->add_particles();
+    this->qpm = std::make_unique<ExternalCommon::QuadraturePointMapper>(
+      sycl_target, domain);
+    this->cdc_project = std::make_shared<CellDatConst<REAL>>(
+      this->sycl_target, mesh->get_cell_count(),1, 1);
   }
 
   void write(){
@@ -158,6 +168,7 @@ struct TwoStreamParticles {
        Sym<REAL>("P"),
        Sym<REAL>("V"), 
        Sym<REAL>("E"), 
+       Sym<REAL>("Q"), 
        Sym<INT>("CELL_ID"),
        Sym<INT>("NESO_MPI_RANK"),
        Sym<INT>("PARTICLE_ID")
@@ -203,21 +214,34 @@ struct TwoStreamParticles {
     ParticleSet initial_distribution(
       N, this->particle_group->get_particle_spec());
 
+    std::normal_distribution norm_dist{0.0, 1.0};
+
     for (int px = 0; px < N; px++) {
 
       const bool species = px % 2;
       // x position
-      const double pos_orig_0 = positions[0][px];
-      initial_distribution[Sym<REAL>("P")][px][0] = pos_orig_0;
+      const double x0 = positions[0][px];
+      initial_distribution[Sym<REAL>("P")][px][0] = x0;
 
       // y position
-      const double pos_orig_1 = positions[1][px];
-      initial_distribution[Sym<REAL>("P")][px][1] = pos_orig_1;
+      const double x1 = positions[1][px];
+      initial_distribution[Sym<REAL>("P")][px][1] = x1;
 
-      initial_distribution[Sym<REAL>("V")][px][0] =
-          (species) ? initial_velocity : -1.0 * initial_velocity;
-      initial_distribution[Sym<REAL>("V")][px][1] = 0.0;
-      initial_distribution[Sym<REAL>("Q")][px][0] = particle_charge;
+      auto v0 = norm_dist(rng_phasespace);
+      auto v1 = norm_dist(rng_phasespace);
+      initial_distribution[Sym<REAL>("V")][px][0] = species ? v0 : -v0;
+      initial_distribution[Sym<REAL>("V")][px][1] = species ? v1 : -v1;
+      
+      const REAL x0d = x0 - 0.5;
+      const REAL x1d = x1 - 0.5;
+      initial_distribution[Sym<REAL>("Q")][px][0] = exp(-2.0 * (x0d*x0d + x1d*x1d));
+
+
+      //initial_distribution[Sym<REAL>("Q")][px][0] = particle_charge;
+      //initial_distribution[Sym<REAL>("V")][px][0] =
+      //    (species) ? initial_velocity : -1.0 * initial_velocity;
+      //initial_distribution[Sym<REAL>("V")][px][1] = 0.0;
+
       initial_distribution[Sym<REAL>("M")][px][0] = particle_mass;
     }
 
@@ -246,12 +270,91 @@ struct TwoStreamParticles {
   }
 
   void validate_halos(){
+    int rank;
+    MPICHK(MPI_Comm_rank(MPI_COMM_WORLD, &rank));
+    if (mesh->dmh_halo){
+      mesh->dmh_halo->write_vtk("halo_" + std::to_string(rank) + ".vtk");
+    }
     NESOASSERT(this->mesh->validate_halos(), "Halo validation failed.");
   }
 
   void move(){
     this->loop_advect->execute();
     this->transfer_particles();
+  }
+
+  void dof_mapper_create(
+    const int num_dofs
+  ){
+    this->dof_mapper_dg = std::make_unique<ExternalCommon::DOFMapperDG>(
+    sycl_target, this->mesh->dmh->get_cell_count(), num_dofs);
+    nprint("cell_count:", this->mesh->dmh->get_cell_count());
+  }
+
+  void dof_mapper_set(
+    const int cell,
+    const int dof,
+    const int index
+  ){
+    this->dof_mapper_dg->set(cell, dof, index);
+  }
+
+  void qpm_setup(
+    const int nrow,
+    const int ncol,
+    std::uintptr_t vptr
+  ){
+    NESOASSERT(ncol == this->ndim, "Quadrature points have a bad number of columns.");
+    REAL * pts = reinterpret_cast<REAL *>(vptr);
+    this->qpm->add_points_initialise();
+    for (int rx = 0; rx<nrow; rx++) {
+      this->qpm->add_point(pts);
+      pts += ndim;
+    }
+    this->qpm->add_points_finalise();
+  }
+
+  void qpm_project(
+    const int nrow,
+    const int ncol,
+    std::uintptr_t vptr
+    ){
+
+    this->cdc_project->fill(0);
+    particle_loop(
+      "TwoStreamParticles::project_0",
+      this->particle_group,
+      [=](
+        auto Q,
+        auto C
+      ){
+        C.fetch_add(0, 0, Q.at(0));
+      },
+      Access::read(Sym<REAL>("Q")),
+      Access::add(this->cdc_project)
+    )->execute();
+
+    //this->particle_group->print(Sym<REAL>("Q"));
+
+    particle_loop(
+      "TwoStreamParticles::project_1",
+      this->qpm->particle_group,
+      [=](
+        auto Q,
+        auto C
+      ){
+        Q.at(0) = C.at(0, 0);
+      },
+      Access::write(this->qpm->get_sym(1)),
+      Access::read(this->cdc_project)
+    )->execute();
+
+    //this->qpm->particle_group->print(this->qpm->get_sym(1));
+
+    std::vector<REAL> output;
+    this->qpm->get(1, output);
+    REAL * pts = reinterpret_cast<REAL *>(vptr);
+    std::memcpy(pts, output.data(), nrow * ncol * sizeof(REAL));
   }
 
 };
@@ -262,8 +365,13 @@ PYBIND11_MODULE(two_stream, m) {
   py::class_<TwoStreamParticles>(m, "TwoStreamParticles")
       .def(py::init<std::uintptr_t, const int, const double>())
       .def("free", &TwoStreamParticles::free)
-      .def("write",&TwoStreamParticles::write)
-      .def("move",&TwoStreamParticles::move)
-      .def("validate_halos",&TwoStreamParticles::validate_halos);
+      .def("write", &TwoStreamParticles::write)
+      .def("move", &TwoStreamParticles::move)
+      .def("validate_halos", &TwoStreamParticles::validate_halos)
+      .def("add_particles", &TwoStreamParticles::add_particles)
+      .def("dof_mapper_create", &TwoStreamParticles::dof_mapper_create)
+      .def("dof_mapper_set", &TwoStreamParticles::dof_mapper_set)
+      .def("qpm_setup", &TwoStreamParticles::qpm_setup)
+      .def("qpm_project", &TwoStreamParticles::qpm_project);
 
 }
