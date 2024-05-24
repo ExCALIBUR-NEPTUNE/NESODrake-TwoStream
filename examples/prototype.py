@@ -1,4 +1,5 @@
 from firedrake import *
+from firedrake.__future__ import interpolate
 from two_stream import *
 
 
@@ -22,7 +23,7 @@ if __name__ == "__main__":
     
     num_steps = 800
     num_cells = 16
-    num_particles = 100000
+    num_particles = 10000
 
     #mesh = PeriodicUnitSquareMesh(
     mesh = UnitSquareMesh(

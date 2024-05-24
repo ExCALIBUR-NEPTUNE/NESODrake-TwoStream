@@ -246,21 +246,8 @@ struct TwoStreamParticles {
     }
 
     this->particle_group->add_particles_local(initial_distribution);
-    parallel_advection_initialisation(this->particle_group);
-    parallel_advection_store(this->particle_group);
-    const int num_steps = 20;
-    for (int stepx = 0; stepx < num_steps; stepx++) {
-      if(!rank){
-        nprint("Advection Setup:", stepx);
-      }
-      // this->write();
-      parallel_advection_step(this->particle_group, num_steps, stepx);
-      this->transfer_particles();
-    }
-    parallel_advection_restore(this->particle_group);
-    // Move particles to the owning ranks and correct cells.
+    parallel_advection_initialisation(this->particle_group, 20);
     this->transfer_particles();
-    // this->write();
   }
   
   void transfer_particles() {
