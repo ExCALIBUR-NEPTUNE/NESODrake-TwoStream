@@ -12,18 +12,29 @@ def setup_project(particle_state, V):
     ptr = X.dat.data_ro.ctypes._as_parameter_.value
     particle_state.qpm_setup(nrow, ncol, ptr)
 
-def project(particle_state, u):
+def project(particle_state, u, v = None):
     space = np.zeros_like(u.dat.data)
     nrow = space.shape[0]
     ncol = 1
     particle_state.qpm_project(nrow, ncol, space.ctypes._as_parameter_.value)
     u.dat.data[:] = space
+    if v is not None:
+        v.interpolate(u)
+
+def evaluate(particle_state, u, v = None):
+    if v is not None:
+        u.interpolate(v)
+    space = u.dat.data_ro
+    nrow = space.shape[0]
+    ncol = 1
+    particle_state.qpm_evaluate(nrow, ncol, space.ctypes._as_parameter_.value)
+
 
 if __name__ == "__main__":
     
-    num_steps = 800
+    num_steps = 200
     num_cells = 16
-    num_particles = 10000
+    num_particles = 100000
 
     #mesh = PeriodicUnitSquareMesh(
     mesh = UnitSquareMesh(
@@ -54,6 +65,7 @@ if __name__ == "__main__":
 
     setup_project(particle_state, V)
     project(particle_state, u)
+    evaluate(particle_state, u)
 
     outfile = VTKFile("mesh.pvd")
     outfile.write(mesh)
@@ -69,6 +81,7 @@ if __name__ == "__main__":
                 print(stepx)
 
             project(particle_state, u)
+            evaluate(particle_state, u)
             particle_state.write();
             outfile.write(u)
 

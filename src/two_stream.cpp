@@ -16,6 +16,13 @@ using namespace NESO::Particles;
   c3 = ((a1) * (b2)) - ((a2) * (b1));
 #endif
 
+#ifndef KERNEL_ABS
+#define KERNEL_ABS(x) ((x) < 0 ? (-(x)) : (x))
+#endif
+
+#ifndef KERNEL_MAX
+#define KERNEL_MAX(x, y) ((x) < (y) ? ((y)) : (x))
+#endif
 
 struct TwoStreamParticles {
   
@@ -64,8 +71,6 @@ struct TwoStreamParticles {
         this->dm, 0, PETSC_COMM_WORLD);
     this->ndim = mesh->get_ndim();
 
-    nprint("cell_count:", mesh->get_cell_count());
-
     auto mapper = std::make_shared<PetscInterface::DMPlexLocalMapper>(
         sycl_target, mesh);
     this->domain = std::make_shared<Domain>(mesh, mapper);
@@ -86,8 +91,13 @@ struct TwoStreamParticles {
       "TwoStreamParticles::pbc",
       this->particle_group,
       [=](auto P){
-        P.at(0) = fmod(P.at(0) + 4.0, 1.0);
-        P.at(1) = fmod(P.at(1) + 4.0, 1.0);
+        const REAL offset = ((INT)(
+            KERNEL_MAX(KERNEL_ABS(P.at(0)), KERNEL_ABS(P.at(1))) + 4.0
+          )
+        );
+                
+        P.at(0) = fmod(P.at(0) + offset, 1.0);
+        P.at(1) = fmod(P.at(1) + offset, 1.0);
       },
       Access::write(Sym<REAL>("P"))
     );
@@ -275,7 +285,6 @@ struct TwoStreamParticles {
   ){
     this->dof_mapper_dg = std::make_unique<ExternalCommon::DOFMapperDG>(
     sycl_target, this->mesh->dmh->get_cell_count(), num_dofs);
-    nprint("cell_count:", this->mesh->dmh->get_cell_count());
   }
 
   void dof_mapper_set(
@@ -344,6 +353,41 @@ struct TwoStreamParticles {
     std::memcpy(pts, output.data(), nrow * ncol * sizeof(REAL));
   }
 
+  void qpm_evaluate(
+    const int nrow,
+    const int ncol,
+    std::uintptr_t vptr
+  ){
+    REAL * pts = reinterpret_cast<REAL *>(vptr);
+    std::vector<REAL> input(nrow * ncol);
+    for(int cx=0 ; cx <(nrow*ncol) ; cx++){
+      input.at(cx) = pts[cx];
+    }
+    this->qpm->set(1, input);
+
+    particle_loop(
+      this->qpm->particle_group,
+      [=](auto Q, auto O, auto C) {
+        if (O.at(3) == 0) {
+          C.at(0, 0) = Q.at(0);
+        }
+      },
+      Access::read(qpm->get_sym(1)),
+      Access::read(Sym<INT>("ADDING_RANK_INDEX")),
+      Access::write(this->cdc_project))
+      ->execute();
+
+    particle_loop(
+      this->particle_group,
+      [=](auto E, auto C) {
+        E.at(0) = C.at(0, 0); 
+      },
+      Access::write(Sym<REAL>("E")),
+      Access::read(this->cdc_project)
+    )->execute();
+  }
+
+
 };
 
 
@@ -359,6 +403,7 @@ PYBIND11_MODULE(two_stream, m) {
       .def("dof_mapper_create", &TwoStreamParticles::dof_mapper_create)
       .def("dof_mapper_set", &TwoStreamParticles::dof_mapper_set)
       .def("qpm_setup", &TwoStreamParticles::qpm_setup)
-      .def("qpm_project", &TwoStreamParticles::qpm_project);
+      .def("qpm_project", &TwoStreamParticles::qpm_project)
+      .def("qpm_evaluate", &TwoStreamParticles::qpm_evaluate);
 
 }
