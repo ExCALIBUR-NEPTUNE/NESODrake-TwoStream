@@ -72,7 +72,7 @@ struct TwoStreamParticles {
       std::make_shared<PetscInterface::DMPlexInterface>(
         this->dm, 0, PETSC_COMM_WORLD);
     this->ndim = mesh->get_ndim();
-
+    
     auto mapper = std::make_shared<PetscInterface::DMPlexLocalMapper>(
         sycl_target, mesh);
     this->domain = std::make_shared<Domain>(mesh, mapper);
@@ -224,9 +224,7 @@ struct TwoStreamParticles {
     const int npart_per_cell = std::ceil(((double) this->num_particles) / ((double) cell_count_global));
     this->num_particles = cell_count_global * npart_per_cell;
     const int N = npart_per_cell * cell_count_local;
-
     const double volume = this->mesh->dmh->get_volume();
-
 
     int global_id_start;
     MPICHK(MPI_Exscan(&N, &global_id_start, 1,
@@ -263,20 +261,18 @@ struct TwoStreamParticles {
       const double x1 = positions[1][px];
       initial_distribution[Sym<REAL>("P")][px][1] = x1;
 
-      auto v0 = norm_dist(rng_phasespace);
-      auto v1 = norm_dist(rng_phasespace);
-      initial_distribution[Sym<REAL>("V")][px][0] = species ? v0 : -v0;
-      initial_distribution[Sym<REAL>("V")][px][1] = species ? v1 : -v1;
-      
-      const REAL x0d = x0 - 0.5;
-      const REAL x1d = x1 - 0.5;
-      initial_distribution[Sym<REAL>("Q")][px][0] = exp(-2.0 * (x0d*x0d + x1d*x1d));
+      //auto v0 = norm_dist(rng_phasespace);
+      //auto v1 = norm_dist(rng_phasespace);
+      //initial_distribution[Sym<REAL>("V")][px][0] = species ? v0 : -v0;
+      //initial_distribution[Sym<REAL>("V")][px][1] = species ? v1 : -v1;
+      //const REAL x0d = x0 - 0.5;
+      //const REAL x1d = x1 - 0.5;
+      //initial_distribution[Sym<REAL>("Q")][px][0] = exp(-2.0 * (x0d*x0d + x1d*x1d));
 
-
-      //initial_distribution[Sym<REAL>("Q")][px][0] = particle_charge;
-      //initial_distribution[Sym<REAL>("V")][px][0] =
-      //    (species) ? initial_velocity : -1.0 * initial_velocity;
-      //initial_distribution[Sym<REAL>("V")][px][1] = 0.0;
+      initial_distribution[Sym<REAL>("Q")][px][0] = particle_charge;
+      initial_distribution[Sym<REAL>("V")][px][0] =
+          (species) ? initial_velocity : -1.0 * initial_velocity;
+      initial_distribution[Sym<REAL>("V")][px][1] = 0.0;
 
       initial_distribution[Sym<REAL>("M")][px][0] = particle_mass;
     }
@@ -294,6 +290,7 @@ struct TwoStreamParticles {
       Access::read(Sym<REAL>("Q")),
       Access::add(ga_net_charge)
     )->execute();
+
     this->net_charge_density = ga_net_charge->get().at(0) / volume;
   }
   

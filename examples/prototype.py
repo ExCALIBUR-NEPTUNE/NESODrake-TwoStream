@@ -1,7 +1,7 @@
 from firedrake import *
 from firedrake.__future__ import interpolate
 from two_stream import *
-
+import sys
 
 def setup_project(particle_state, V):
     m = V.mesh()
@@ -41,9 +41,9 @@ def evaluate(particle_state, u, v):
 if __name__ == "__main__":
     
     num_steps = 20
-    num_print_steps = 1
-    num_cells = 16
-    num_particles = 100000
+    num_print_steps = 10
+    num_cells = 32
+    num_particles = 400000
 
     mesh_np = PeriodicUnitSquareMesh(
         num_cells, 
@@ -67,49 +67,50 @@ if __name__ == "__main__":
     particle_state = TwoStreamParticles(
         mesh.topology_dm.handle,
         num_particles,
-        0.0005
+        0.001
     )
-    
-    net_charge_density = Constant(particle_state.get_net_charge_density())
 
     particle_state.validate_halos()
     particle_state.add_particles()
 
     setup_project(particle_state, DG_np)
     setup_evaluate(particle_state, DG_np)
-    #project(particle_state, u)
-    #evaluate(particle_state, u)
     
     E = Function(BDM)
-    phi = Function(DG)
+    rho = Function(DG)
+    neutralising_field = Function(DG)
+    net_charge_density = particle_state.get_net_charge_density()
+    neutralising_field.interpolate(net_charge_density)
 
-    x, y = SpatialCoordinate(mesh)
-    E.interpolate(
-        as_vector([cos(4*y), -sin(5*x)]),
-    )
+    project(particle_state, rho, interp_intermediate)
+    f = neutralising_field - rho
+
+    sigma, u = TrialFunctions(W)
+    tau, v = TestFunctions(W)
     
-    project(particle_state, phi, interp_intermediate)
-    evaluate(particle_state, E, interp_intermediate)
+    a = (dot(sigma, tau) + div(tau)*u + div(sigma)*v)*dx
+    L = - f*v*dx
+    
+    w = Function(W)
+    E, rho = w.subfunctions
+    
+    # project(particle_state, rho, interp_intermediate)
+    # evaluate(particle_state, E, interp_intermediate)
 
-    out_phi = VTKFile("phi.pvd")
-    out_phi.write(phi)
+    out_rho = VTKFile("rho.pvd")
     out_E = VTKFile("E.pvd")
-    out_E.write(E) 
-
-    particle_state.write();
-
-    particle_state.free(); quit()
 
     for stepx in range(num_steps):
         if (stepx % num_print_steps == 0):
             if mpi.COMM_WORLD.rank == 0:
                 print(stepx)
-
-            project(particle_state, u)
-            evaluate(particle_state, u)
+            out_rho.write(rho)
+            out_E.write(E) 
             particle_state.write();
-            outfile.write(u)
 
+        project(particle_state, rho, interp_intermediate)
+        solve(a == L, w, bcs=[])
+        evaluate(particle_state, E, interp_intermediate)
         particle_state.move()
 
     particle_state.free();
