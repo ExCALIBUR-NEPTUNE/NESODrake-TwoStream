@@ -40,10 +40,10 @@ def evaluate(particle_state, u, v):
 
 if __name__ == "__main__":
     
-    num_steps = 20
+    num_steps = 2000
     num_print_steps = 10
     num_cells = 32
-    num_particles = 400000
+    num_particles = 200000
 
     mesh_np = PeriodicUnitSquareMesh(
         num_cells, 
