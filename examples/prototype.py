@@ -40,10 +40,11 @@ def evaluate(particle_state, u, v):
 
 if __name__ == "__main__":
     
-    num_steps = 2000
-    num_print_steps = 10
-    num_cells = 32
+    num_steps = 200
+    num_print_steps = 5
+    num_cells = 16
     num_particles = 200000
+    p = 1
 
     mesh_np = PeriodicUnitSquareMesh(
         num_cells, 
@@ -54,12 +55,12 @@ if __name__ == "__main__":
         num_cells
     )
 
-    BDM_np = FunctionSpace(mesh_np, "BDM", 1)
-    DG_np = FunctionSpace(mesh_np, "DG", 0)
+    BDM_np = FunctionSpace(mesh_np, "BDM", p+1)
+    DG_np = FunctionSpace(mesh_np, "DG", p)
     interp_intermediate = Function(DG_np)
 
-    BDM = FunctionSpace(mesh, "BDM", 1)
-    DG = FunctionSpace(mesh, "DG", 0)
+    BDM = FunctionSpace(mesh, "BDM", p+1)
+    DG = FunctionSpace(mesh, "DG", p)
     W = BDM * DG
 
     # Immediately pass the DM to NESO-Particles before Firedrake adds any halo
@@ -67,7 +68,8 @@ if __name__ == "__main__":
     particle_state = TwoStreamParticles(
         mesh.topology_dm.handle,
         num_particles,
-        0.001
+        0.001,
+        p
     )
 
     particle_state.validate_halos()
@@ -89,10 +91,10 @@ if __name__ == "__main__":
     tau, v = TestFunctions(W)
     
     a = (dot(sigma, tau) + div(tau)*u + div(sigma)*v)*dx
-    L = - f*v*dx
+    L = f*v*dx
     
     w = Function(W)
-    E, rho = w.subfunctions
+    E, phi = w.subfunctions
     
     # project(particle_state, rho, interp_intermediate)
     # evaluate(particle_state, E, interp_intermediate)
@@ -104,9 +106,12 @@ if __name__ == "__main__":
         if (stepx % num_print_steps == 0):
             if mpi.COMM_WORLD.rank == 0:
                 print(stepx)
+                sys.stdout.flush()
             out_rho.write(rho)
             out_E.write(E) 
             particle_state.write();
+
+
 
         project(particle_state, rho, interp_intermediate)
         solve(a == L, w, bcs=[])

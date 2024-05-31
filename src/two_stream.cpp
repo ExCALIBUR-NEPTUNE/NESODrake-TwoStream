@@ -32,6 +32,8 @@ struct TwoStreamParticles {
   int ndim;
   double dt;
   double net_charge_density;
+  int polynomial_order;
+
   SYCLTargetSharedPtr sycl_target;
   std::shared_ptr<PetscInterface::DMPlexInterface> mesh;
   DomainSharedPtr domain;
@@ -50,11 +52,13 @@ struct TwoStreamParticles {
   TwoStreamParticles(
     std::uintptr_t dm_vptr,
     const int num_particles,
-    const double dt
+    const double dt,
+    const int polynomial_order
   ) : 
     num_particles(num_particles),
     sycl_target(std::make_shared<SYCLTarget>(0, PETSC_COMM_WORLD)),
-    dt(dt)
+    dt(dt),
+    polynomial_order(polynomial_order)
   {
     this->sycl_target->print_device_info();
 
@@ -173,10 +177,13 @@ struct TwoStreamParticles {
       sycl_target, domain);
     this->qpm_evaluate = std::make_shared<ExternalCommon::QuadraturePointMapper>(
       sycl_target, domain);
+    
+    std::string function_space = (polynomial_order == 0) ? "DG" : "Barycentric";
+
     this->dpe_project = std::make_unique<PetscInterface::DMPlexProjectEvaluate>(
-      qpm_project, "DG", 0);
+      qpm_project, function_space, polynomial_order);
     this->dpe_evaluate = std::make_unique<PetscInterface::DMPlexProjectEvaluate>(
-      qpm_evaluate, "DG", 0);
+      qpm_evaluate, function_space, polynomial_order);
   }
 
   void write(){
@@ -261,13 +268,13 @@ struct TwoStreamParticles {
       const double x1 = positions[1][px];
       initial_distribution[Sym<REAL>("P")][px][1] = x1;
 
-      //auto v0 = norm_dist(rng_phasespace);
-      //auto v1 = norm_dist(rng_phasespace);
-      //initial_distribution[Sym<REAL>("V")][px][0] = species ? v0 : -v0;
-      //initial_distribution[Sym<REAL>("V")][px][1] = species ? v1 : -v1;
-      //const REAL x0d = x0 - 0.5;
-      //const REAL x1d = x1 - 0.5;
-      //initial_distribution[Sym<REAL>("Q")][px][0] = exp(-2.0 * (x0d*x0d + x1d*x1d));
+      // auto v0 = norm_dist(rng_phasespace);
+      // auto v1 = norm_dist(rng_phasespace);
+      // initial_distribution[Sym<REAL>("V")][px][0] = species ? v0 : -v0;
+      // initial_distribution[Sym<REAL>("V")][px][1] = species ? v1 : -v1;
+      // const REAL x0d = x0 - 0.5;
+      // const REAL x1d = x1 - 0.5;
+      // initial_distribution[Sym<REAL>("Q")][px][0] = exp(-2.0 * (x0d*x0d + x1d*x1d));
 
       initial_distribution[Sym<REAL>("Q")][px][0] = particle_charge;
       initial_distribution[Sym<REAL>("V")][px][0] =
@@ -381,7 +388,7 @@ struct TwoStreamParticles {
 PYBIND11_MODULE(two_stream, m) {
 
   py::class_<TwoStreamParticles>(m, "TwoStreamParticles")
-      .def(py::init<std::uintptr_t, const int, const double>())
+      .def(py::init<std::uintptr_t, const int, const double, const int>())
       .def("free", &TwoStreamParticles::free)
       .def("write", &TwoStreamParticles::write)
       .def("move", &TwoStreamParticles::move)
