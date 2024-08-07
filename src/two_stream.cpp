@@ -223,6 +223,8 @@ struct TwoStreamParticles {
     if (this->h5part){
       this->h5part->close();
     }
+    this->qpm_project->free();
+    this->qpm_evaluate->free();
   }
 
   void add_particles(){
@@ -255,10 +257,14 @@ struct TwoStreamParticles {
 
     const REAL initial_velocity = 1.0;
     const REAL charge_density = 105.27578027828649;
-    const REAL particle_number_density = 105.27578027828649;
-    const REAL number_physical_particles = particle_number_density * volume;
+    //const REAL particle_number_density = 105.27578027828649;
+    //const REAL number_physical_particles = particle_number_density * volume;
+    //const REAL particle_charge =
+    //      charge_density * volume / number_physical_particles;
+
     const REAL particle_charge =
-          charge_density * volume / number_physical_particles;
+          charge_density * volume / N;
+
     const REAL particle_mass = 1.0;
   
     ParticleSet initial_distribution(
@@ -306,8 +312,14 @@ struct TwoStreamParticles {
       Access::read(Sym<REAL>("Q")),
       Access::add(ga_net_charge)
     )->execute();
-
+    
     this->net_charge_density = ga_net_charge->get().at(0) / volume;
+    if(!rank){
+      nprint("volume:", volume);
+      nprint("total charge:", ga_net_charge->get().at(0));
+      nprint("charge density:", this->net_charge_density);
+    }
+
   }
   
   void transfer_particles() {

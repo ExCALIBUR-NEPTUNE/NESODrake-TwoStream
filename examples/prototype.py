@@ -40,9 +40,9 @@ def evaluate(particle_state, u, v):
 
 if __name__ == "__main__":
     
-    num_steps = 2000
-    num_print_steps = 2
-    num_write_steps = 2
+    num_steps = 100
+    num_print_steps = 1
+    num_write_steps = 1
     num_energy_steps = 2
 
     num_cells_y = 3
@@ -90,24 +90,32 @@ if __name__ == "__main__":
     setup_evaluate(particle_state, DG_np)
     
     E = Function(BDM)
-    rho = Function(DG)
-    neutralising_field = Function(DG)
+    rho = Function(DG, name="rho")
+    neutralising_field = Function(DG, name="neutralising_field")
+    poisson_rhs = Function(DG, name="poisson_rhs")
     net_charge_density = particle_state.get_net_charge_density()
     neutralising_field.interpolate(net_charge_density)
     
-    f = neutralising_field - rho
+    poisson_rhs.interpolate(neutralising_field - rho)
     
     sigma, u = TrialFunctions(W)
     tau, v = TestFunctions(W)
     
     a = (dot(sigma, tau) + div(tau)*u + div(sigma)*v)*dx
-    L = f*v*dx
+    L = poisson_rhs*v*dx
     
     w = Function(W)
     E, phi = w.subfunctions
     
     project(particle_state, rho, interp_intermediate)
     evaluate(particle_state, E, interp_intermediate)
+    poisson_rhs.interpolate(neutralising_field - rho)
+
+    rho_integral = assemble(rho * dx)
+    rhs_integral = assemble(poisson_rhs * dx)
+    
+    print("rho_integral:", rho_integral)
+    print("rhs_integral:", rhs_integral)
     
     out_rho = VTKFile("rho.pvd")
     out_E = VTKFile("E.pvd")
@@ -116,6 +124,7 @@ if __name__ == "__main__":
     list_E2 = []
     for stepx in range(num_steps):
         project(particle_state, rho, interp_intermediate)
+        poisson_rhs.interpolate(neutralising_field - rho)
         solve(a == L, w, bcs=[])
         evaluate(particle_state, E, interp_intermediate)
 
@@ -125,7 +134,7 @@ if __name__ == "__main__":
                 sys.stdout.flush()
 
         if (stepx % num_write_steps == 0) and (num_write_steps > 0):
-            out_rho.write(rho)
+            out_rho.write(rho, poisson_rhs)
             out_E.write(E) 
             particle_state.write();
     
