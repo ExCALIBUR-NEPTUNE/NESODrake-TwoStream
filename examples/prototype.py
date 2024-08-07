@@ -40,19 +40,30 @@ def evaluate(particle_state, u, v):
 
 if __name__ == "__main__":
     
-    num_steps = 200
-    num_print_steps = 5
-    num_cells = 16
-    num_particles = 200000
+    num_steps = 2000
+    num_print_steps = 2
+    num_write_steps = 2
+    num_energy_steps = 2
+
+    num_cells_y = 3
+    num_cells_x = 100
+    num_particles = 400000
+    dt = 0.001
     p = 1
 
-    mesh_np = PeriodicUnitSquareMesh(
-        num_cells, 
-        num_cells
+    mesh_width = 0.01
+
+    mesh_np = PeriodicRectangleMesh(
+        num_cells_x, 
+        num_cells_y,
+        1.0,
+        mesh_width
     )
-    mesh = UnitSquareMesh(
-        num_cells, 
-        num_cells
+    mesh = RectangleMesh(
+        num_cells_x, 
+        num_cells_y,
+        1.0,
+        mesh_width
     )
 
     BDM_np = FunctionSpace(mesh_np, "BDM", p+1)
@@ -68,13 +79,13 @@ if __name__ == "__main__":
     particle_state = TwoStreamParticles(
         mesh.topology_dm.handle,
         num_particles,
-        0.001,
+        dt,
         p
     )
-
     particle_state.validate_halos()
-    particle_state.add_particles()
 
+    particle_state.add_particles()
+    
     setup_project(particle_state, DG_np)
     setup_evaluate(particle_state, DG_np)
     
@@ -83,10 +94,9 @@ if __name__ == "__main__":
     neutralising_field = Function(DG)
     net_charge_density = particle_state.get_net_charge_density()
     neutralising_field.interpolate(net_charge_density)
-
-    project(particle_state, rho, interp_intermediate)
+    
     f = neutralising_field - rho
-
+    
     sigma, u = TrialFunctions(W)
     tau, v = TestFunctions(W)
     
@@ -96,26 +106,40 @@ if __name__ == "__main__":
     w = Function(W)
     E, phi = w.subfunctions
     
-    # project(particle_state, rho, interp_intermediate)
-    # evaluate(particle_state, E, interp_intermediate)
-
+    project(particle_state, rho, interp_intermediate)
+    evaluate(particle_state, E, interp_intermediate)
+    
     out_rho = VTKFile("rho.pvd")
     out_E = VTKFile("E.pvd")
-
+    
+    list_t = []
+    list_E2 = []
     for stepx in range(num_steps):
-        if (stepx % num_print_steps == 0):
-            if mpi.COMM_WORLD.rank == 0:
-                print(stepx)
-                sys.stdout.flush()
-            out_rho.write(rho)
-            out_E.write(E) 
-            particle_state.write();
-
-
-
         project(particle_state, rho, interp_intermediate)
         solve(a == L, w, bcs=[])
         evaluate(particle_state, E, interp_intermediate)
+
+        if (stepx % num_print_steps == 0):
+            if mpi.COMM_WORLD.rank == 0:
+                print("step:", stepx)
+                sys.stdout.flush()
+
+        if (stepx % num_write_steps == 0) and (num_write_steps > 0):
+            out_rho.write(rho)
+            out_E.write(E) 
+            particle_state.write();
+    
         particle_state.move()
 
+        if (stepx % num_energy_steps == 0):
+            list_t.append(stepx * dt)
+            list_E2.append(norm(E) ** 2.0)
+
     particle_state.free();
+
+    if mpi.COMM_WORLD.rank == 0:
+        array_t = np.array(list_t)
+        array_E2 = np.array(list_E2)
+        np.save("t.npy", array_t)
+        np.save("E2.npy", array_E2)
+

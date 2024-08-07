@@ -33,6 +33,7 @@ struct TwoStreamParticles {
   double dt;
   double net_charge_density;
   int polynomial_order;
+  std::string function_space;
 
   SYCLTargetSharedPtr sycl_target;
   std::shared_ptr<PetscInterface::DMPlexInterface> mesh;
@@ -45,8 +46,8 @@ struct TwoStreamParticles {
 
   std::shared_ptr<ExternalCommon::QuadraturePointMapper> qpm_project;
   std::shared_ptr<ExternalCommon::QuadraturePointMapper> qpm_evaluate;
-  std::unique_ptr<PetscInterface::DMPlexProjectEvaluate> dpe_project;
-  std::unique_ptr<PetscInterface::DMPlexProjectEvaluate> dpe_evaluate;
+  std::shared_ptr<PetscInterface::DMPlexProjectEvaluate> dpe_project;
+  std::shared_ptr<PetscInterface::DMPlexProjectEvaluate> dpe_evaluate;
 
   TwoStreamParticles() = default;
   TwoStreamParticles(
@@ -95,6 +96,17 @@ struct TwoStreamParticles {
     this->particle_group = std::make_shared<ParticleGroup>(
         this->domain, particle_spec, this->sycl_target);
 
+    auto mesh_bounding_box = mesh->dmh->get_bounding_box();
+    REAL lower[3];
+    REAL extent[3];
+
+    for(int dx=0 ; dx<ndim ; dx++){
+      lower[dx] = mesh_bounding_box->lower(dx);
+      extent[dx] = mesh_bounding_box->upper(dx) - lower[dx];
+    }
+    
+    NESOASSERT(ndim == 2, "unexpected ndim");
+    const int k_ndim = ndim;
     this->loop_pbc = particle_loop(
       "TwoStreamParticles::pbc",
       this->particle_group,
@@ -103,9 +115,9 @@ struct TwoStreamParticles {
             KERNEL_MAX(KERNEL_ABS(P.at(0)), KERNEL_ABS(P.at(1))) + 4.0
           )
         );
-                
-        P.at(0) = fmod(P.at(0) + offset, 1.0);
-        P.at(1) = fmod(P.at(1) + offset, 1.0);
+        for(int dx=0 ; dx<k_ndim ; dx++){
+          P.at(dx) = Kernel::fmod(P.at(dx) + offset - lower[dx], extent[dx]) + lower[dx];
+        }
       },
       Access::write(Sym<REAL>("P"))
     );
@@ -178,12 +190,8 @@ struct TwoStreamParticles {
     this->qpm_evaluate = std::make_shared<ExternalCommon::QuadraturePointMapper>(
       sycl_target, domain);
     
-    std::string function_space = (polynomial_order == 0) ? "DG" : "Barycentric";
+    this->function_space = (this->polynomial_order == 0) ? "DG" : "Barycentric";
 
-    this->dpe_project = std::make_unique<PetscInterface::DMPlexProjectEvaluate>(
-      qpm_project, function_space, polynomial_order);
-    this->dpe_evaluate = std::make_unique<PetscInterface::DMPlexProjectEvaluate>(
-      qpm_evaluate, function_space, polynomial_order);
   }
 
   void write(){
@@ -268,19 +276,20 @@ struct TwoStreamParticles {
       const double x1 = positions[1][px];
       initial_distribution[Sym<REAL>("P")][px][1] = x1;
 
-      // auto v0 = norm_dist(rng_phasespace);
-      // auto v1 = norm_dist(rng_phasespace);
-      // initial_distribution[Sym<REAL>("V")][px][0] = species ? v0 : -v0;
-      // initial_distribution[Sym<REAL>("V")][px][1] = species ? v1 : -v1;
-      // const REAL x0d = x0 - 0.5;
-      // const REAL x1d = x1 - 0.5;
-      // initial_distribution[Sym<REAL>("Q")][px][0] = exp(-2.0 * (x0d*x0d + x1d*x1d));
+      //auto v0 = norm_dist(rng_phasespace);
+      //auto v1 = norm_dist(rng_phasespace);
+      //initial_distribution[Sym<REAL>("V")][px][0] = species ? v0 : -v0;
+      //initial_distribution[Sym<REAL>("V")][px][1] = species ? v1 : -v1;
+      //const REAL x0d = x0 - 0.5;
+      //const REAL x1d = x1 - 0.5;
+      //initial_distribution[Sym<REAL>("Q")][px][0] = exp(-2.0 * (x0d*x0d + x1d*x1d));
 
       initial_distribution[Sym<REAL>("Q")][px][0] = particle_charge;
       initial_distribution[Sym<REAL>("V")][px][0] =
           (species) ? initial_velocity : -1.0 * initial_velocity;
       initial_distribution[Sym<REAL>("V")][px][1] = 0.0;
-
+      initial_distribution[Sym<REAL>("V")][px][2] = 0.0;
+      
       initial_distribution[Sym<REAL>("M")][px][0] = particle_mass;
     }
 
@@ -338,6 +347,8 @@ struct TwoStreamParticles {
       pts += ndim;
     }
     this->qpm_project->add_points_finalise();
+    this->dpe_project = std::make_shared<PetscInterface::DMPlexProjectEvaluate>(
+      qpm_project, function_space, polynomial_order);
   }
 
   void setup_evaluate(
@@ -353,6 +364,8 @@ struct TwoStreamParticles {
       pts += ndim;
     }
     this->qpm_evaluate->add_points_finalise();
+    this->dpe_evaluate = std::make_shared<PetscInterface::DMPlexProjectEvaluate>(
+      qpm_evaluate, function_space, polynomial_order);
   }
 
   void project(
@@ -360,7 +373,8 @@ struct TwoStreamParticles {
     const int ncol,
     std::uintptr_t vptr
     ){
-
+    
+    NESOASSERT(this->dpe_project != nullptr, "dpe_project is nullptr");
     this->dpe_project->project(this->particle_group, Sym<REAL>("Q"));
     std::vector<REAL> output;
     this->qpm_project->get(1, output);
@@ -374,6 +388,7 @@ struct TwoStreamParticles {
     const int ncol,
     std::uintptr_t vptr
   ){
+    NESOASSERT(this->dpe_evaluate != nullptr, "dpe_evaluate is nullptr");
     REAL * pts = reinterpret_cast<REAL *>(vptr);
     std::vector<REAL> input(nrow * ncol);
     for(int cx=0 ; cx <(nrow*ncol) ; cx++){
@@ -382,8 +397,28 @@ struct TwoStreamParticles {
     this->qpm_evaluate->set(1, input);
     this->dpe_evaluate->evaluate(
       this->particle_group, Sym<REAL>("E" + std::to_string(component)));
+    //this->qpm_evaluate->particle_group->print(Sym<REAL>("P"), Sym<INT>("ADDING_RANK_INDEX"), Sym<REAL>("contrib_1"));
+    //auto ptr = std::dynamic_pointer_cast<PetscInterface::DMPlexProjectEvaluateDG>(this->dpe_evaluate->implementation);
+    //ptr->cdc_project->print();
   }
 };
+
+struct NESODrakeDebug {
+  NESODrakeDebug(){
+  }
+  
+  void foo(std::uintptr_t dm_vptr){
+    nprint("foo start");
+    DM dm = reinterpret_cast<DM>(dm_vptr);
+    auto mesh = std::make_shared<PetscInterface::DMPlexInterface>(
+      dm, 0, PETSC_COMM_WORLD);   
+
+    mesh->free();
+    nprint("foo end");
+  }
+
+};
+
 
 PYBIND11_MODULE(two_stream, m) {
 
@@ -400,4 +435,11 @@ PYBIND11_MODULE(two_stream, m) {
       .def("evaluate", &TwoStreamParticles::evaluate)
       .def("get_net_charge_density", &TwoStreamParticles::get_net_charge_density);
 
+  py::class_<NESODrakeDebug>(m, "NESODrakeDebug")
+      .def(py::init<>())
+      .def("foo", &NESODrakeDebug::foo);
+
 }
+
+
+
