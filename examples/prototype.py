@@ -2,6 +2,7 @@ from firedrake import *
 from firedrake.__future__ import interpolate
 from two_stream import *
 import sys
+import time
 
 def setup_project(particle_state, V):
     m = V.mesh()
@@ -41,8 +42,8 @@ def evaluate(particle_state, u, v):
 if __name__ == "__main__":
     
     num_steps = 100
-    num_print_steps = 1
-    num_write_steps = 1
+    num_print_steps = 5
+    num_write_steps = 5
     num_energy_steps = 2
 
     num_cells_y = 3
@@ -53,13 +54,13 @@ if __name__ == "__main__":
 
     mesh_width = 0.01
 
-    mesh_np = PeriodicRectangleMesh(
+    mesh = PeriodicRectangleMesh(
         num_cells_x, 
         num_cells_y,
         1.0,
         mesh_width
     )
-    mesh = RectangleMesh(
+    mesh_np = RectangleMesh(
         num_cells_x, 
         num_cells_y,
         1.0,
@@ -77,7 +78,7 @@ if __name__ == "__main__":
     # Immediately pass the DM to NESO-Particles before Firedrake adds any halo
     # cells.
     particle_state = TwoStreamParticles(
-        mesh.topology_dm.handle,
+        mesh_np.topology_dm.handle,
         num_particles,
         dt,
         p
@@ -122,16 +123,13 @@ if __name__ == "__main__":
     
     list_t = []
     list_E2 = []
+
+    t0 = time.time()
     for stepx in range(num_steps):
         project(particle_state, rho, interp_intermediate)
         poisson_rhs.interpolate(neutralising_field - rho)
         solve(a == L, w, bcs=[])
         evaluate(particle_state, E, interp_intermediate)
-
-        if (stepx % num_print_steps == 0):
-            if mpi.COMM_WORLD.rank == 0:
-                print("step:", stepx)
-                sys.stdout.flush()
 
         if (stepx % num_write_steps == 0) and (num_write_steps > 0):
             out_rho.write(rho, poisson_rhs)
@@ -143,6 +141,16 @@ if __name__ == "__main__":
         if (stepx % num_energy_steps == 0):
             list_t.append(stepx * dt)
             list_E2.append(norm(E) ** 2.0)
+
+        if (stepx % num_print_steps == 0):
+            if mpi.COMM_WORLD.rank == 0:
+                time_per_step = (time.time() - t0) / (stepx+1)
+                print(
+                    "step:", stepx,
+                    "time per step: {:5.2e}".format(time_per_step), 
+                    "time left: {:5.2e}".format((num_steps - stepx - 1) * time_per_step)
+                )
+                sys.stdout.flush()
 
     particle_state.free();
 

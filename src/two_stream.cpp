@@ -34,6 +34,8 @@ struct TwoStreamParticles {
   double net_charge_density;
   int polynomial_order;
   std::string function_space;
+  REAL particle_charge_dynamics;
+  REAL particle_mass;
 
   SYCLTargetSharedPtr sycl_target;
   std::shared_ptr<PetscInterface::DMPlexInterface> mesh;
@@ -86,7 +88,6 @@ struct TwoStreamParticles {
                                ParticleProp(Sym<INT>("CELL_ID"), 1, true),
                                ParticleProp(Sym<INT>("PARTICLE_ID"), 1),
                                ParticleProp(Sym<REAL>("Q"), 1),
-                               ParticleProp(Sym<REAL>("M"), 1),
                                ParticleProp(Sym<REAL>("V"), 3),
                                ParticleProp(Sym<REAL>("B"), 3),
                                ParticleProp(Sym<REAL>("E0"), 1),
@@ -103,6 +104,9 @@ struct TwoStreamParticles {
     for(int dx=0 ; dx<ndim ; dx++){
       lower[dx] = mesh_bounding_box->lower(dx);
       extent[dx] = mesh_bounding_box->upper(dx) - lower[dx];
+      if (!this->sycl_target->comm_pair.rank_parent){
+        nprint("lower:", lower[dx], "extent:", extent[dx]);
+      }
     }
     
     NESOASSERT(ndim == 2, "unexpected ndim");
@@ -124,10 +128,11 @@ struct TwoStreamParticles {
     
     const REAL k_dt = this->dt;
     const REAL k_dht = 0.5 * k_dt; 
+    const REAL QoM = this->particle_charge_dynamics / this->particle_mass;
+
     this->loop_advect = particle_loop(
       "ParticleSystem:boris", this->particle_group,
-      [=](auto B, auto E0, auto E1, auto Q, auto M, auto P, auto V) {
-        const REAL QoM = Q.at(0) / M.at(0);
+      [=](auto B, auto E0, auto E1, auto Q, auto P, auto V) {
 
         const REAL scaling_t = QoM * k_dht;
         const REAL t_0 = B.at(0) * scaling_t;
@@ -180,7 +185,6 @@ struct TwoStreamParticles {
       Access::read(Sym<REAL>("E0")),
       Access::read(Sym<REAL>("E1")),
       Access::read(Sym<REAL>("Q")), 
-      Access::read(Sym<REAL>("M")),
       Access::write(Sym<REAL>("P")),
       Access::write(Sym<REAL>("V"))
     );
@@ -240,11 +244,17 @@ struct TwoStreamParticles {
     
     const int npart_per_cell = std::ceil(((double) this->num_particles) / ((double) cell_count_global));
     this->num_particles = cell_count_global * npart_per_cell;
-    const int N = npart_per_cell * cell_count_local;
+    const int num_particles_local = npart_per_cell * cell_count_local;
+    const int num_particles_global = npart_per_cell * cell_count_global;
     const double volume = this->mesh->dmh->get_volume();
 
+    if(!rank){
+      nprint("npart_per_cell:", npart_per_cell);
+      nprint("cell_count_local:", cell_count_local);
+    }
+
     int global_id_start;
-    MPICHK(MPI_Exscan(&N, &global_id_start, 1,
+    MPICHK(MPI_Exscan(&num_particles_local, &global_id_start, 1,
            MPI_INT, MPI_SUM, this->sycl_target->comm_pair.comm_parent));
     
     std::srand(std::time(nullptr));
@@ -257,22 +267,23 @@ struct TwoStreamParticles {
 
     const REAL initial_velocity = 1.0;
     const REAL charge_density = 105.27578027828649;
-    //const REAL particle_number_density = 105.27578027828649;
-    //const REAL number_physical_particles = particle_number_density * volume;
+    const REAL particle_number_density = 105.27578027828649;
+    const REAL number_physical_particles = particle_number_density * volume;
     //const REAL particle_charge =
     //      charge_density * volume / number_physical_particles;
 
     const REAL particle_charge =
-          charge_density * volume / N;
+          charge_density * volume / num_particles_global;
+    this->particle_charge_dynamics = charge_density * volume / number_physical_particles;
 
-    const REAL particle_mass = 1.0;
+    this->particle_mass = 1.0;
   
     ParticleSet initial_distribution(
-      N, this->particle_group->get_particle_spec());
+      num_particles_local, this->particle_group->get_particle_spec());
 
     std::normal_distribution norm_dist{0.0, 1.0};
 
-    for (int px = 0; px < N; px++) {
+    for (int px = 0; px < num_particles_local; px++) {
       const bool species = (global_id_start + px) % 2;
       // x position
       const double x0 = positions[0][px];
@@ -295,8 +306,6 @@ struct TwoStreamParticles {
           (species) ? initial_velocity : -1.0 * initial_velocity;
       initial_distribution[Sym<REAL>("V")][px][1] = 0.0;
       initial_distribution[Sym<REAL>("V")][px][2] = 0.0;
-      
-      initial_distribution[Sym<REAL>("M")][px][0] = particle_mass;
     }
 
     this->particle_group->add_particles_local(initial_distribution);
@@ -315,6 +324,11 @@ struct TwoStreamParticles {
     
     this->net_charge_density = ga_net_charge->get().at(0) / volume;
     if(!rank){
+      nprint("particle_mass:", particle_mass);
+      nprint("particle_charge_dynamics:", this->particle_charge_dynamics);
+      nprint("particle_charse_physical:", particle_charge);
+      nprint("num_computational_particles_global:", num_particles_global);
+      nprint("num_computational_particles_local:", num_particles_local);
       nprint("volume:", volume);
       nprint("total charge:", ga_net_charge->get().at(0));
       nprint("charge density:", this->net_charge_density);
