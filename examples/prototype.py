@@ -34,9 +34,9 @@ class ProjectEvaluate:
 
 if __name__ == "__main__":
     
-    num_steps = 1000
+    num_steps = 6000
     num_print_steps = 10
-    num_write_steps = 10
+    num_write_steps = 20
     num_energy_steps = 10
 
     num_cells_y = 3
@@ -132,20 +132,19 @@ if __name__ == "__main__":
     t0 = time.time()
     for stepx in range(num_steps):
         particle_state.move_vv1()
-        # pe.project("Q", rho)
-        # poisson_rhs.interpolate(neutralising_field - rho)
+        pe.project("Q", rho)
+        poisson_rhs.interpolate(neutralising_field - rho)
         solve(a == L, w, bcs=[], nullspace=nullspace)
         pe.evaluate(E[0], "E0")
         pe.evaluate(E[1], "E1")
-        pe.evaluate(phi, "PHI")
         particle_state.move_vv2()
-        #particle_state.move()
+
+        #particle_state.move() # This is Boris 
 
         if (stepx % num_write_steps == 0) and (num_write_steps > 0):
             out_rho.write(rho, poisson_rhs)
             out_E.write(E) 
             particle_state.write();
-    
         
         last_potential_energy = 0.0
         last_kinetic_energy = 0.0
@@ -153,6 +152,7 @@ if __name__ == "__main__":
         if (stepx % num_energy_steps == 0):
             list_t.append(stepx * dt)
             list_E2.append(norm(E) ** 2.0)
+            pe.evaluate(phi, "PHI")
             update_particle_energy()
 
         if (stepx % num_print_steps == 0):
