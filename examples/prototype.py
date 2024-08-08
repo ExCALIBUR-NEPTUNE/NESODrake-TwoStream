@@ -61,8 +61,6 @@ if __name__ == "__main__":
     )
     pe = ProjectEvaluate(particle_state, DG_np)
 
-
-
     mesh = PeriodicRectangleMesh(
         num_cells_x, 
         num_cells_y,
@@ -171,8 +169,12 @@ if __name__ == "__main__":
     particle_state.free();
 
     if mpi.COMM_WORLD.rank == 0:
-        array_t = np.array(list_t)
-        array_E2 = np.array(list_E2)
-        np.save("t.npy", array_t)
-        np.save("E2.npy", array_E2)
+        np.save("t.npy", np.array(list_t))
+        np.save("E2.npy", np.array(list_E2))
+        np.save("potential_energy.npy", np.array(potential_energy))
+        np.save("kinetic_energy.npy", np.array(kinetic_energy))
+        np.save("total_energy.npy", np.array(total_energy))
+
+
+
 

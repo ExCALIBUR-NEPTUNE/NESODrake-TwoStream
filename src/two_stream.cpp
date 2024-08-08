@@ -240,7 +240,7 @@ struct TwoStreamParticles {
       Access::read(Sym<REAL>("PHI")),
       Access::add(ga)
     )->execute();
-    return ga->get().at(0);
+    return ga->get().at(0) * 0.5;
   }
 
   REAL compute_kinetic_energy(){
@@ -248,7 +248,7 @@ struct TwoStreamParticles {
     auto ga = std::make_shared<GlobalArray<REAL>>(this->sycl_target, 1);
     ga->fill(0.0);
     particle_loop(
-      "compute_potential_energy",
+      "compute_kinetic_energy",
       this->particle_group,
       [=](auto V, auto GA){
         GA.add(0,
