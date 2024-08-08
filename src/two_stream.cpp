@@ -46,10 +46,8 @@ struct TwoStreamParticles {
   ParticleLoopSharedPtr loop_advect;
   std::shared_ptr<H5Part> h5part;
 
-  std::shared_ptr<ExternalCommon::QuadraturePointMapper> qpm_project;
-  std::shared_ptr<ExternalCommon::QuadraturePointMapper> qpm_evaluate;
-  std::shared_ptr<PetscInterface::DMPlexProjectEvaluate> dpe_project;
-  std::shared_ptr<PetscInterface::DMPlexProjectEvaluate> dpe_evaluate;
+  std::shared_ptr<ExternalCommon::QuadraturePointMapper> qpm;
+  std::shared_ptr<PetscInterface::DMPlexProjectEvaluate> dpe;
 
   TwoStreamParticles() = default;
   TwoStreamParticles(
@@ -88,6 +86,7 @@ struct TwoStreamParticles {
                                ParticleProp(Sym<INT>("CELL_ID"), 1, true),
                                ParticleProp(Sym<INT>("PARTICLE_ID"), 1),
                                ParticleProp(Sym<REAL>("Q"), 1),
+                               ParticleProp(Sym<REAL>("PHI"), 1),
                                ParticleProp(Sym<REAL>("V"), 3),
                                ParticleProp(Sym<REAL>("B"), 3),
                                ParticleProp(Sym<REAL>("E0"), 1),
@@ -189,9 +188,7 @@ struct TwoStreamParticles {
       Access::write(Sym<REAL>("V"))
     );
 
-    this->qpm_project = std::make_shared<ExternalCommon::QuadraturePointMapper>(
-      sycl_target, domain);
-    this->qpm_evaluate = std::make_shared<ExternalCommon::QuadraturePointMapper>(
+    this->qpm = std::make_shared<ExternalCommon::QuadraturePointMapper>(
       sycl_target, domain);
     
     this->function_space = (this->polynomial_order == 0) ? "DG" : "Barycentric";
@@ -227,8 +224,41 @@ struct TwoStreamParticles {
     if (this->h5part){
       this->h5part->close();
     }
-    this->qpm_project->free();
-    this->qpm_evaluate->free();
+    this->qpm->free();
+  }
+
+  REAL compute_potential_energy(){
+    const REAL Q = this->particle_charge_dynamics;
+    auto ga = std::make_shared<GlobalArray<REAL>>(this->sycl_target, 1);
+    ga->fill(0.0);
+    particle_loop(
+      "compute_potential_energy",
+      this->particle_group,
+      [=](auto PHI, auto GA){
+        GA.add(0, PHI.at(0) * Q);
+      },
+      Access::read(Sym<REAL>("PHI")),
+      Access::add(ga)
+    )->execute();
+    return ga->get().at(0);
+  }
+
+  REAL compute_kinetic_energy(){
+    const REAL M = this->particle_mass * 0.5;
+    auto ga = std::make_shared<GlobalArray<REAL>>(this->sycl_target, 1);
+    ga->fill(0.0);
+    particle_loop(
+      "compute_potential_energy",
+      this->particle_group,
+      [=](auto V, auto GA){
+        GA.add(0,
+          M * (V.at(0) * V.at(0) + V.at(1) * V.at(1))
+        );
+      },
+      Access::read(Sym<REAL>("V")),
+      Access::add(ga)
+    )->execute();
+    return ga->get().at(0);
   }
 
   void add_particles(){
@@ -326,7 +356,7 @@ struct TwoStreamParticles {
     if(!rank){
       nprint("particle_mass:", particle_mass);
       nprint("particle_charge_dynamics:", this->particle_charge_dynamics);
-      nprint("particle_charse_physical:", particle_charge);
+      nprint("particle_charge_physical:", particle_charge);
       nprint("num_computational_particles_global:", num_particles_global);
       nprint("num_computational_particles_local:", num_particles_local);
       nprint("volume:", volume);
@@ -367,65 +397,46 @@ struct TwoStreamParticles {
   ){
     NESOASSERT(ncol == this->ndim, "Quadrature points have a bad number of columns.");
     REAL * pts = reinterpret_cast<REAL *>(vptr);
-    this->qpm_project->add_points_initialise();
+    this->qpm->add_points_initialise();
     for (int rx = 0; rx<nrow; rx++) {
-      this->qpm_project->add_point(pts);
+      this->qpm->add_point(pts);
       pts += ndim;
     }
-    this->qpm_project->add_points_finalise();
-    this->dpe_project = std::make_shared<PetscInterface::DMPlexProjectEvaluate>(
-      qpm_project, function_space, polynomial_order);
-  }
-
-  void setup_evaluate(
-    const int nrow,
-    const int ncol,
-    std::uintptr_t vptr
-  ){
-    NESOASSERT(ncol == this->ndim, "Quadrature points have a bad number of columns.");
-    REAL * pts = reinterpret_cast<REAL *>(vptr);
-    this->qpm_evaluate->add_points_initialise();
-    for (int rx = 0; rx<nrow; rx++) {
-      this->qpm_evaluate->add_point(pts);
-      pts += ndim;
-    }
-    this->qpm_evaluate->add_points_finalise();
-    this->dpe_evaluate = std::make_shared<PetscInterface::DMPlexProjectEvaluate>(
-      qpm_evaluate, function_space, polynomial_order);
+    this->qpm->add_points_finalise();
+    this->dpe = std::make_shared<PetscInterface::DMPlexProjectEvaluate>(
+      qpm, function_space, polynomial_order);
   }
 
   void project(
+    const std::string sym_name,
     const int nrow,
     const int ncol,
     std::uintptr_t vptr
     ){
-    
-    NESOASSERT(this->dpe_project != nullptr, "dpe_project is nullptr");
-    this->dpe_project->project(this->particle_group, Sym<REAL>("Q"));
+    NESOASSERT(this->dpe != nullptr, "dpe is nullptr");
+    this->dpe->project(this->particle_group, Sym<REAL>(sym_name));
+
     std::vector<REAL> output;
-    this->qpm_project->get(1, output);
+    this->qpm->get(1, output);
     REAL * pts = reinterpret_cast<REAL *>(vptr);
     std::memcpy(pts, output.data(), nrow * ncol * sizeof(REAL));
   }
 
   void evaluate(
-    const int component,
+    const std::string sym_name,
     const int nrow,
     const int ncol,
     std::uintptr_t vptr
   ){
-    NESOASSERT(this->dpe_evaluate != nullptr, "dpe_evaluate is nullptr");
+    NESOASSERT(this->dpe != nullptr, "dpe_evaluate is nullptr");
     REAL * pts = reinterpret_cast<REAL *>(vptr);
     std::vector<REAL> input(nrow * ncol);
     for(int cx=0 ; cx <(nrow*ncol) ; cx++){
       input.at(cx) = pts[cx];
     }
-    this->qpm_evaluate->set(1, input);
-    this->dpe_evaluate->evaluate(
-      this->particle_group, Sym<REAL>("E" + std::to_string(component)));
-    //this->qpm_evaluate->particle_group->print(Sym<REAL>("P"), Sym<INT>("ADDING_RANK_INDEX"), Sym<REAL>("contrib_1"));
-    //auto ptr = std::dynamic_pointer_cast<PetscInterface::DMPlexProjectEvaluateDG>(this->dpe_evaluate->implementation);
-    //ptr->cdc_project->print();
+    this->qpm->set(1, input);
+    this->dpe->evaluate(
+      this->particle_group, Sym<REAL>(sym_name));
   }
 };
 
@@ -456,9 +467,10 @@ PYBIND11_MODULE(two_stream, m) {
       .def("validate_halos", &TwoStreamParticles::validate_halos)
       .def("add_particles", &TwoStreamParticles::add_particles)
       .def("setup_project", &TwoStreamParticles::setup_project)
-      .def("setup_evaluate", &TwoStreamParticles::setup_evaluate)
       .def("project", &TwoStreamParticles::project)
       .def("evaluate", &TwoStreamParticles::evaluate)
+      .def("compute_potential_energy", &TwoStreamParticles::compute_potential_energy)
+      .def("compute_kinetic_energy", &TwoStreamParticles::compute_kinetic_energy)
       .def("get_net_charge_density", &TwoStreamParticles::get_net_charge_density);
 
   py::class_<NESODrakeDebug>(m, "NESODrakeDebug")
