@@ -390,6 +390,59 @@ struct TwoStreamParticles {
     this->transfer_particles();
   }
 
+  
+  void move_vv1(){
+    const REAL Q = this->particle_charge_dynamics;
+    const REAL k_dt = this->dt;
+    const REAL k_dht = 0.5 * k_dt; 
+    const REAL k_M = this->particle_mass;
+    const double dht_inverse_particle_mass = -1.0 * k_dht * Q / k_M;
+    particle_loop(
+      "move_vv1",
+      this->particle_group,
+      [=](
+        auto P,
+        auto V,
+        auto E0,
+        auto E1
+      ){
+          V.at(0) += E0.at(0) * dht_inverse_particle_mass;
+          P.at(0) += k_dt * V.at(0);
+          V.at(1) += E1.at(0) * dht_inverse_particle_mass;
+          P.at(1) += k_dt * V.at(1);
+      },
+      Access::write(Sym<REAL>("P")),
+      Access::write(Sym<REAL>("V")),
+      Access::read(Sym<REAL>("E0")),
+      Access::read(Sym<REAL>("E1"))
+    )->execute();
+    this->transfer_particles();
+  }
+
+  void move_vv2(){
+    const REAL Q = this->particle_charge_dynamics;
+    const REAL k_dt = this->dt;
+    const REAL k_dht = 0.5 * k_dt; 
+    const REAL k_M = this->particle_mass;
+    const double dht_inverse_particle_mass = -1.0 * k_dht * Q / k_M;
+    const int k_ndim = this->ndim;
+    particle_loop(
+      "move_vv2",
+      this->particle_group,
+      [=](
+        auto V,
+        auto E0,
+        auto E1
+      ){
+          V.at(0) += E0.at(0) * dht_inverse_particle_mass;
+          V.at(1) += E1.at(0) * dht_inverse_particle_mass;
+      },
+      Access::write(Sym<REAL>("V")),
+      Access::read(Sym<REAL>("E0")),
+      Access::read(Sym<REAL>("E1"))
+    )->execute();
+  }
+
   void setup_project(
     const int nrow,
     const int ncol,
@@ -464,6 +517,8 @@ PYBIND11_MODULE(two_stream, m) {
       .def("free", &TwoStreamParticles::free)
       .def("write", &TwoStreamParticles::write)
       .def("move", &TwoStreamParticles::move)
+      .def("move_vv1", &TwoStreamParticles::move_vv1)
+      .def("move_vv2", &TwoStreamParticles::move_vv2)
       .def("validate_halos", &TwoStreamParticles::validate_halos)
       .def("add_particles", &TwoStreamParticles::add_particles)
       .def("setup_project", &TwoStreamParticles::setup_project)

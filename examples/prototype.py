@@ -34,10 +34,10 @@ class ProjectEvaluate:
 
 if __name__ == "__main__":
     
-    num_steps = 100
-    num_print_steps = 1
-    num_write_steps = 5
-    num_energy_steps = 1
+    num_steps = 1000
+    num_print_steps = 10
+    num_write_steps = 10
+    num_energy_steps = 10
 
     num_cells_y = 3
     num_cells_x = 100
@@ -123,22 +123,29 @@ if __name__ == "__main__":
         potential_energy.append(pe)
         kinetic_energy.append(ke)
         total_energy.append(pe + ke)
+    
+
+    x, y = SpatialCoordinate(mesh)
+
+    poisson_rhs.interpolate(100.0 * sin(x * 2.0 * pi))
 
     t0 = time.time()
     for stepx in range(num_steps):
-        pe.project("Q", rho)
-        poisson_rhs.interpolate(neutralising_field - rho)
+        particle_state.move_vv1()
+        # pe.project("Q", rho)
+        # poisson_rhs.interpolate(neutralising_field - rho)
         solve(a == L, w, bcs=[], nullspace=nullspace)
         pe.evaluate(E[0], "E0")
         pe.evaluate(E[1], "E1")
         pe.evaluate(phi, "PHI")
+        particle_state.move_vv2()
+        #particle_state.move()
 
         if (stepx % num_write_steps == 0) and (num_write_steps > 0):
             out_rho.write(rho, poisson_rhs)
             out_E.write(E) 
             particle_state.write();
     
-        particle_state.move()
         
         last_potential_energy = 0.0
         last_kinetic_energy = 0.0
@@ -152,7 +159,7 @@ if __name__ == "__main__":
             if mpi.COMM_WORLD.rank == 0:
                 time_per_step = (time.time() - t0) / (stepx+1)
                 print(
-                    "step:", stepx,
+                    "step: {:5d}".format(stepx),
                     "time per step: {:5.2e}".format(time_per_step), 
                     "time left: {:5.2e}".format((num_steps - stepx - 1) * time_per_step),
                     "pe: {:16.10e}".format(potential_energy[-1]),
