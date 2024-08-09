@@ -321,21 +321,17 @@ struct TwoStreamParticles {
 
       // y position
       const double x1 = positions[1][px];
+
       initial_distribution[Sym<REAL>("P")][px][1] = x1;
-
-      //auto v0 = norm_dist(rng_phasespace);
-      //auto v1 = norm_dist(rng_phasespace);
-      //initial_distribution[Sym<REAL>("V")][px][0] = species ? v0 : -v0;
-      //initial_distribution[Sym<REAL>("V")][px][1] = species ? v1 : -v1;
-      //const REAL x0d = x0 - 0.5;
-      //const REAL x1d = x1 - 0.5;
-      //initial_distribution[Sym<REAL>("Q")][px][0] = exp(-2.0 * (x0d*x0d + x1d*x1d));
-
       initial_distribution[Sym<REAL>("Q")][px][0] = particle_charge;
       initial_distribution[Sym<REAL>("V")][px][0] =
           (species) ? initial_velocity : -1.0 * initial_velocity;
       initial_distribution[Sym<REAL>("V")][px][1] = 0.0;
       initial_distribution[Sym<REAL>("V")][px][2] = 0.0;
+      initial_distribution[Sym<REAL>("B")][px][0] = 0.0;
+      initial_distribution[Sym<REAL>("B")][px][1] = 0.0;
+      initial_distribution[Sym<REAL>("B")][px][2] = 0.0;
+      initial_distribution[Sym<INT>("PARTICLE_ID")][px][0] = global_id_start + px;
     }
 
     this->particle_group->add_particles_local(initial_distribution);
