@@ -54,9 +54,12 @@ class Evaluator:
         self.v.assign(assemble(self.interpolator.interpolate()))
         self.project_evaluate.evaluate(self.v, self.sym_name)
 
+boris = "boris"
+velocity_verlet = "velocity_verlet"
 
 if __name__ == "__main__":
-
+    
+    integrator = boris
     num_steps = 4000
     num_print_steps = 10
     num_write_steps = 20
@@ -68,6 +71,7 @@ if __name__ == "__main__":
     dt = 0.001
     p = 1
     mesh_width = 0.01
+
 
     mesh_np = RectangleMesh(num_cells_x, num_cells_y, 1.0, mesh_width)
     DG_np = FunctionSpace(mesh_np, "DG", p)
@@ -112,8 +116,10 @@ if __name__ == "__main__":
     rho_integral = assemble(rho * dx)
     rhs_integral = assemble(poisson_rhs * dx)
 
-    print("rho_integral:", rho_integral)
-    print("rhs_integral:", rhs_integral)
+    if mpi.COMM_WORLD.rank == 0:
+        print("integrator:", integrator)
+        print("rho_integral:", rho_integral)
+        print("rhs_integral:", rhs_integral)
 
     out_rho = VTKFile("rho.pvd")
     out_E = VTKFile("E.pvd")
@@ -131,21 +137,20 @@ if __name__ == "__main__":
         kinetic_energy.append(ke)
         total_energy.append(pe + ke)
 
-    x, y = SpatialCoordinate(mesh)
-
-    poisson_rhs.interpolate(100.0 * sin(x * 2.0 * pi))
-
+    assert integrator == velocity_verlet or integrator == boris, "Unknown integrator."
     t0 = time.time()
     for stepx in range(num_steps):
-        # particle_state.move_vv1()
+        if integrator == velocity_verlet:
+            particle_state.move_vv1()
         projector_rho()
         poisson_rhs.interpolate(neutralising_field - rho)
         solve(a == L, w, bcs=[], nullspace=nullspace)
         evaluator_E0()
         evaluator_E1()
-        # particle_state.move_vv2()
-
-        particle_state.move()  # This is Boris
+        if integrator == velocity_verlet:
+            particle_state.move_vv2()
+        elif integrator == boris:
+            particle_state.move_boris()
 
         if (stepx % num_write_steps == 0) and (num_write_steps > 0):
             out_rho.write(rho, poisson_rhs)

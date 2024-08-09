@@ -381,7 +381,7 @@ struct TwoStreamParticles {
     return this->net_charge_density;
   }
 
-  void move(){
+  void move_boris(){
     this->loop_advect->execute();
     this->transfer_particles();
   }
@@ -512,7 +512,7 @@ PYBIND11_MODULE(two_stream, m) {
       .def(py::init<std::uintptr_t, const int, const double, const int>())
       .def("free", &TwoStreamParticles::free)
       .def("write", &TwoStreamParticles::write)
-      .def("move", &TwoStreamParticles::move)
+      .def("move_boris", &TwoStreamParticles::move_boris)
       .def("move_vv1", &TwoStreamParticles::move_vv1)
       .def("move_vv2", &TwoStreamParticles::move_vv2)
       .def("validate_halos", &TwoStreamParticles::validate_halos)
