@@ -60,6 +60,7 @@ velocity_verlet = "velocity_verlet"
 if __name__ == "__main__":
     
     integrator = boris
+    # integrator = velocity_verlet
     num_steps = 4000
     num_print_steps = 10
     num_write_steps = 20
@@ -73,12 +74,12 @@ if __name__ == "__main__":
     mesh_width = 0.01
 
 
-    mesh_np = RectangleMesh(num_cells_x, num_cells_y, 1.0, mesh_width)
+    mesh_np = RectangleMesh(num_cells_x, num_cells_y, 1.0, mesh_width, quadrilateral=False)
     DG_np = FunctionSpace(mesh_np, "DG", p)
     particle_state = TwoStreamParticles(mesh_np.topology_dm.handle, num_particles, dt, p)
     pe = ProjectEvaluate(particle_state, DG_np)
 
-    mesh = PeriodicRectangleMesh(num_cells_x, num_cells_y, 1.0, mesh_width)
+    mesh = PeriodicRectangleMesh(num_cells_x, num_cells_y, 1.0, mesh_width, quadrilateral=False)
     BDM = FunctionSpace(mesh, "BDM", p + 1)
     DG = FunctionSpace(mesh, "DG", p)
     W = BDM * DG

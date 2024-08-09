@@ -43,7 +43,6 @@ struct TwoStreamParticles {
   ParticleGroupSharedPtr particle_group;
 
   ParticleLoopSharedPtr loop_pbc;
-  ParticleLoopSharedPtr loop_advect;
   std::shared_ptr<H5Part> h5part;
 
   std::shared_ptr<ExternalCommon::QuadraturePointMapper> qpm;
@@ -125,69 +124,6 @@ struct TwoStreamParticles {
       Access::write(Sym<REAL>("P"))
     );
     
-    const REAL k_dt = this->dt;
-    const REAL k_dht = 0.5 * k_dt; 
-    const REAL QoM = this->particle_charge_dynamics / this->particle_mass;
-
-    this->loop_advect = particle_loop(
-      "ParticleSystem:boris", this->particle_group,
-      [=](auto B, auto E0, auto E1, auto Q, auto P, auto V) {
-
-        const REAL scaling_t = QoM * k_dht;
-        const REAL t_0 = B.at(0) * scaling_t;
-        const REAL t_1 = B.at(1) * scaling_t;
-        const REAL t_2 = B.at(2) * scaling_t;
-
-        const REAL tmagsq = t_0 * t_0 + t_1 * t_1 + t_2 * t_2;
-        const REAL scaling_s = 2.0 / (1.0 + tmagsq);
-
-        const REAL s_0 = scaling_s * t_0;
-        const REAL s_1 = scaling_s * t_1;
-        const REAL s_2 = scaling_s * t_2;
-
-        const REAL V_0 = V.at(0);
-        const REAL V_1 = V.at(1);
-        const REAL V_2 = V.at(2);
-
-        // The E dat contains d(phi)/dx not E -> multiply by -1.
-        const REAL v_minus_0 = V_0 + (-1.0 * E0.at(0)) * scaling_t;
-        const REAL v_minus_1 = V_1 + (-1.0 * E1.at(0)) * scaling_t;
-        const REAL v_minus_2 = V_2;
-
-        REAL v_prime_0, v_prime_1, v_prime_2;
-        CROSS_PRODUCT_3D(v_minus_0, v_minus_1, v_minus_2, t_0, t_1,
-                         t_2, v_prime_0, v_prime_1, v_prime_2)
-
-        v_prime_0 += v_minus_0;
-        v_prime_1 += v_minus_1;
-        v_prime_2 += v_minus_2;
-
-        REAL v_plus_0, v_plus_1, v_plus_2;
-        CROSS_PRODUCT_3D(v_prime_0, v_prime_1, v_prime_2, s_0, s_1,
-                         s_2, v_plus_0, v_plus_1, v_plus_2)
-
-        v_plus_0 += v_minus_0;
-        v_plus_1 += v_minus_1;
-        v_plus_2 += v_minus_2;
-
-        // The E dat contains d(phi)/dx not E -> multiply by -1.
-        V.at(0) = v_plus_0 + scaling_t * (-1.0 * E0.at(0));
-        V.at(1) = v_plus_1 + scaling_t * (-1.0 * E1.at(0));
-        V.at(2) = v_plus_2;
-
-        // update of position to next time step
-        P.at(0) += k_dt * V.at(0);
-        P.at(1) += k_dt * V.at(1);
-        // P.at(2) += k_dt * V.at(2);
-      },
-      Access::read(Sym<REAL>("B")), 
-      Access::read(Sym<REAL>("E0")),
-      Access::read(Sym<REAL>("E1")),
-      Access::read(Sym<REAL>("Q")), 
-      Access::write(Sym<REAL>("P")),
-      Access::write(Sym<REAL>("V"))
-    );
-
     this->qpm = std::make_shared<ExternalCommon::QuadraturePointMapper>(
       sycl_target, domain);
     
@@ -382,7 +318,67 @@ struct TwoStreamParticles {
   }
 
   void move_boris(){
-    this->loop_advect->execute();
+
+    const REAL k_dt = this->dt;
+    const REAL k_dht = 0.5 * k_dt; 
+    const REAL QoM = this->particle_charge_dynamics / this->particle_mass;
+    particle_loop(
+      "ParticleSystem::move_boris", this->particle_group,
+      [=](auto B, auto E0, auto E1, auto P, auto V) {
+
+        const REAL scaling_t = QoM * k_dht;
+        const REAL t_0 = B.at(0) * scaling_t;
+        const REAL t_1 = B.at(1) * scaling_t;
+        const REAL t_2 = B.at(2) * scaling_t;
+
+        const REAL tmagsq = t_0 * t_0 + t_1 * t_1 + t_2 * t_2;
+        const REAL scaling_s = 2.0 / (1.0 + tmagsq);
+
+        const REAL s_0 = scaling_s * t_0;
+        const REAL s_1 = scaling_s * t_1;
+        const REAL s_2 = scaling_s * t_2;
+
+        const REAL V_0 = V.at(0);
+        const REAL V_1 = V.at(1);
+        const REAL V_2 = V.at(2);
+
+        // The E dat contains d(phi)/dx not E -> multiply by -1.
+        const REAL v_minus_0 = V_0 + (-1.0 * E0.at(0)) * scaling_t;
+        const REAL v_minus_1 = V_1 + (-1.0 * E1.at(0)) * scaling_t;
+        const REAL v_minus_2 = V_2;
+
+        REAL v_prime_0, v_prime_1, v_prime_2;
+        CROSS_PRODUCT_3D(v_minus_0, v_minus_1, v_minus_2, t_0, t_1,
+                         t_2, v_prime_0, v_prime_1, v_prime_2)
+
+        v_prime_0 += v_minus_0;
+        v_prime_1 += v_minus_1;
+        v_prime_2 += v_minus_2;
+
+        REAL v_plus_0, v_plus_1, v_plus_2;
+        CROSS_PRODUCT_3D(v_prime_0, v_prime_1, v_prime_2, s_0, s_1,
+                         s_2, v_plus_0, v_plus_1, v_plus_2)
+
+        v_plus_0 += v_minus_0;
+        v_plus_1 += v_minus_1;
+        v_plus_2 += v_minus_2;
+
+        // The E dat contains d(phi)/dx not E -> multiply by -1.
+        V.at(0) = v_plus_0 + scaling_t * (-1.0 * E0.at(0));
+        V.at(1) = v_plus_1 + scaling_t * (-1.0 * E1.at(0));
+        V.at(2) = v_plus_2;
+
+        // update of position to next time step
+        P.at(0) += k_dt * V.at(0);
+        P.at(1) += k_dt * V.at(1);
+        // P.at(2) += k_dt * V.at(2);
+      },
+      Access::read(Sym<REAL>("B")), 
+      Access::read(Sym<REAL>("E0")),
+      Access::read(Sym<REAL>("E1")),
+      Access::write(Sym<REAL>("P")),
+      Access::write(Sym<REAL>("V"))
+    )->execute();
     this->transfer_particles();
   }
 
@@ -394,7 +390,7 @@ struct TwoStreamParticles {
     const REAL k_M = this->particle_mass;
     const double dht_inverse_particle_mass = -1.0 * k_dht * Q / k_M;
     particle_loop(
-      "move_vv1",
+      "ParticleSystem::move_vv1",
       this->particle_group,
       [=](
         auto P,
@@ -423,7 +419,7 @@ struct TwoStreamParticles {
     const double dht_inverse_particle_mass = -1.0 * k_dht * Q / k_M;
     const int k_ndim = this->ndim;
     particle_loop(
-      "move_vv2",
+      "ParticleSystem::move_vv2",
       this->particle_group,
       [=](
         auto V,
