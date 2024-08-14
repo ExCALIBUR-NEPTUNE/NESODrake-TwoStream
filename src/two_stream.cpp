@@ -51,6 +51,8 @@ struct TwoStreamParticles {
   TwoStreamParticles() = default;
   TwoStreamParticles(
     std::uintptr_t dm_vptr,
+    const double mesh_width_x,
+    const double mesh_width_y,
     const int num_particles,
     const double dt,
     const int polynomial_order
@@ -95,16 +97,9 @@ struct TwoStreamParticles {
     this->particle_group = std::make_shared<ParticleGroup>(
         this->domain, particle_spec, this->sycl_target);
 
-    auto mesh_bounding_box = mesh->dmh->get_bounding_box();
-    REAL lower[3];
-    REAL extent[3];
-
-    for(int dx=0 ; dx<ndim ; dx++){
-      lower[dx] = mesh_bounding_box->lower(dx);
-      extent[dx] = mesh_bounding_box->upper(dx) - lower[dx];
-      if (!this->sycl_target->comm_pair.rank_parent){
-        nprint("lower:", lower[dx], "extent:", extent[dx]);
-      }
+    if (!this->sycl_target->comm_pair.rank_parent){
+      nprint("origin:", 0.0, 0.0);
+      nprint("extent:", mesh_width_x, mesh_width_y);
     }
     
     NESOASSERT(ndim == 2, "unexpected ndim");
@@ -117,9 +112,8 @@ struct TwoStreamParticles {
             KERNEL_MAX(KERNEL_ABS(P.at(0)), KERNEL_ABS(P.at(1))) + 4.0
           )
         );
-        for(int dx=0 ; dx<k_ndim ; dx++){
-          P.at(dx) = Kernel::fmod(P.at(dx) + offset - lower[dx], extent[dx]) + lower[dx];
-        }
+        P.at(0) = Kernel::fmod(P.at(0) + offset, mesh_width_x);
+        P.at(1) = Kernel::fmod(P.at(1) + offset, mesh_width_y);
       },
       Access::write(Sym<REAL>("P"))
     );
@@ -128,7 +122,6 @@ struct TwoStreamParticles {
       sycl_target, domain);
     
     this->function_space = (this->polynomial_order == 0) ? "DG" : "Barycentric";
-
   }
 
   void write(){
@@ -268,6 +261,7 @@ struct TwoStreamParticles {
       initial_distribution[Sym<REAL>("B")][px][1] = 0.0;
       initial_distribution[Sym<REAL>("B")][px][2] = 0.0;
       initial_distribution[Sym<INT>("PARTICLE_ID")][px][0] = global_id_start + px;
+      initial_distribution[Sym<INT>("CELL_ID")][px][0] = cells.at(px);
     }
 
     this->particle_group->add_particles_local(initial_distribution);
@@ -448,6 +442,7 @@ struct TwoStreamParticles {
       pts += ndim;
     }
     this->qpm->add_points_finalise();
+    //this->qpm->write_to_disk("two_stream_qpm" + std::to_string(this->sycl_target->comm_pair.size_parent) + ".h5part");
     this->dpe = std::make_shared<PetscInterface::DMPlexProjectEvaluate>(
       qpm, function_space, polynomial_order);
   }
@@ -465,6 +460,12 @@ struct TwoStreamParticles {
     this->qpm->get(1, output);
     REAL * pts = reinterpret_cast<REAL *>(vptr);
     std::memcpy(pts, output.data(), nrow * ncol * sizeof(REAL));
+
+    //const auto size = std::to_string(this->sycl_target->comm_pair.size_parent);
+    //auto vtk_data_dg = this->dpe->get_vtk_data();
+    //VTK::VTKHDF vtkhdf_dg(sym_name + size + ".vtkhdf", MPI_COMM_WORLD);
+    //vtkhdf_dg.write(vtk_data_dg);
+    //vtkhdf_dg.close();
   }
 
   void evaluate(
@@ -482,6 +483,12 @@ struct TwoStreamParticles {
     this->qpm->set(1, input);
     this->dpe->evaluate(
       this->particle_group, Sym<REAL>(sym_name));
+
+    //const auto size = std::to_string(this->sycl_target->comm_pair.size_parent);
+    //auto vtk_data_dg = this->dpe->get_vtk_data();
+    //VTK::VTKHDF vtkhdf_dg(sym_name + size + ".vtkhdf", MPI_COMM_WORLD);
+    //vtkhdf_dg.write(vtk_data_dg);
+    //vtkhdf_dg.close();
   }
 };
 
@@ -505,7 +512,7 @@ struct NESODrakeDebug {
 PYBIND11_MODULE(two_stream, m) {
 
   py::class_<TwoStreamParticles>(m, "TwoStreamParticles")
-      .def(py::init<std::uintptr_t, const int, const double, const int>())
+      .def(py::init<std::uintptr_t, const double, const double, const int, const double, const int>())
       .def("free", &TwoStreamParticles::free)
       .def("write", &TwoStreamParticles::write)
       .def("move_boris", &TwoStreamParticles::move_boris)

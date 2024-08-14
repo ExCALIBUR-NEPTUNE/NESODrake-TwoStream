@@ -4,6 +4,10 @@ from firedrake.__future__ import interpolate, Interpolator
 import sys
 import time
 
+from petsc4py import PETSc
+
+PETSc.Sys.popErrorHandler()
+
 
 class ProjectEvaluate:
     def __init__(self, particle_state, V):
@@ -54,16 +58,17 @@ class Evaluator:
         self.v.assign(assemble(self.interpolator.interpolate()))
         self.project_evaluate.evaluate(self.v, self.sym_name)
 
+
 boris = "boris"
 velocity_verlet = "velocity_verlet"
 
 if __name__ == "__main__":
-    
-    integrator = boris
-    # integrator = velocity_verlet
+
+    # integrator = boris
+    integrator = velocity_verlet
     num_steps = 4000
     num_print_steps = 10
-    num_write_steps = 20
+    num_write_steps = 10
     num_energy_steps = 10
 
     num_cells_y = 3
@@ -71,15 +76,21 @@ if __name__ == "__main__":
     num_particles = 400000
     dt = 0.001
     p = 1
-    mesh_width = 0.01
+    mesh_width_x = 1.0
+    mesh_width_y = 0.01
 
-
-    mesh_np = RectangleMesh(num_cells_x, num_cells_y, 1.0, mesh_width, quadrilateral=False)
+    mesh_np = RectangleMesh(
+        num_cells_x, num_cells_y, mesh_width_x, mesh_width_y, quadrilateral=False
+    )
     DG_np = FunctionSpace(mesh_np, "DG", p)
-    particle_state = TwoStreamParticles(mesh_np.topology_dm.handle, num_particles, dt, p)
+    particle_state = TwoStreamParticles(
+        mesh_np.topology_dm.handle, mesh_width_x, mesh_width_y, num_particles, dt, p
+    )
     pe = ProjectEvaluate(particle_state, DG_np)
 
-    mesh = PeriodicRectangleMesh(num_cells_x, num_cells_y, 1.0, mesh_width, quadrilateral=False)
+    mesh = PeriodicRectangleMesh(
+        num_cells_x, num_cells_y, mesh_width_x, mesh_width_y, quadrilateral=False
+    )
     BDM = FunctionSpace(mesh, "BDM", p + 1)
     DG = FunctionSpace(mesh, "DG", p)
     W = BDM * DG
@@ -152,6 +163,11 @@ if __name__ == "__main__":
             particle_state.move_vv2()
         elif integrator == boris:
             particle_state.move_boris()
+
+        # phi_integral = assemble(phi * dx)
+        # if mpi.COMM_WORLD.rank == 0:
+        #     print(phi_integral)
+        #     sys.stdout.flush()
 
         if (stepx % num_write_steps == 0) and (num_write_steps > 0):
             out_rho.write(rho, poisson_rhs)
